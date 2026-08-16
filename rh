@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# Wrapper auto-entry Robinhood Chain.
+# Semua file tersimpan di folder ini: /root/robinhood-auto-entry
+# Bisa dipanggil dari mana saja dengan perintah: rh
+#
+# Contoh:
+#   ./rh setup 400        bikin funder + 400 wallet sekaligus
+#   ./rh new 200 batch2   tambah 200 wallet grup batch2
+#   ./rh check            cek tanpa kirim tx
+#   ./rh once             1 putaran nyata
+#   ./rh once --limit 50  coba 50 wallet dulu (sisanya tidak disentuh)
+#   ./rh start            jalan terus (loop harian)
+#   ./rh bg               jalan di background via systemd
+#   ./rh log              lihat log systemd
+#   ./rh funder           cek saldo funder + cukup berapa hari
+#   ./rh rpc              tes semua RPC di rpcs.txt
+#   ./rh stats            ringkasan cepat tanpa RPC
+#   ./rh groups           daftar grup
+#   ./rh list             saldo + status hari ini
+#   ./rh verify           cek semua pk cocok dgn address
+#   ./rh backup           salinan bertanggal
+#   ./rh export f.csv     export address+pk
+#   ./rh set-funder 0xPK  pakai funder yang sudah ada
+
+set -euo pipefail
+
+# Ikuti symlink ke lokasi skrip yang asli, supaya shortcut di /usr/local/bin
+# tetap menunjuk ke folder proyek yang benar.
+SRC="${BASH_SOURCE[0]}"
+while [[ -L "$SRC" ]]; do
+  SRC="$(readlink "$SRC")"
+done
+HERE="$(cd "$(dirname "$SRC")" && pwd)"
+
+# venv di dalam folder ini, jadi seluruh isi folder bisa dipindah/copy utuh
+PY="$HERE/.venv/bin/python"
+
+# Selalu pakai folder skrip ini. Diset paksa supaya sisa variabel dari sesi shell
+# lain tidak mengarahkan file wallet ke tempat yang salah.
+export RH_WALLETS="$HERE/wallets.json"
+export RH_STATE="$HERE/state.json"
+export RH_BACKUP_DIR="$HERE/backups"
+
+if [[ ! -x "$PY" ]]; then
+  echo "venv belum ada. Bikin sekali saja:"
+  echo "  cd $HERE"
+  echo "  python3 -m venv .venv"
+  echo "  ./.venv/bin/pip install web3"
+  exit 1
+fi
+
+cmd="${1:-help}"
+shift || true
+BG_ARGS=""
+
+case "$cmd" in
+  setup)
+    n="${1:-100}"
+    grup="${2:-batch1}"
+    if [[ -f "$RH_WALLETS" ]]; then
+      echo "wallets.json sudah ada. Kalau mau NAMBAH wallet pakai: ./rh new $n $grup"
+      exit 1
+    fi
+    "$PY" "$HERE/wallets.py" init > /dev/null
+    "$PY" "$HERE/wallets.py" new "$n" "$grup" | tail -2
+    echo
+    "$PY" "$HERE/wallets.py" verify | tail -2
+    FADDR=$("$PY" -c "import json;print(json.load(open('$RH_WALLETS'))['funder']['address'])")
+    echo
+    echo "=================================================================="
+    echo "  KIRIM ETH KE ADDRESS INI (funder):"
+    echo
+    echo "    $FADDR"
+    echo
+    echo "  Saran: 0.01 ETH. Ini satu-satunya wallet yang kamu isi."
+    echo "=================================================================="
+    echo
+    echo "Langkah berikutnya:"
+    echo "  1. Kirim ETH ke address di atas"
+    echo "  2. ./rh export ~/keys-backup.csv   lalu SIMPAN KELUAR dari server ini"
+    echo "  3. ./rh funder                     cek saldo sudah masuk"
+    echo "  4. ./rh check                      cek tanpa kirim tx"
+    echo "  5. ./rh bg                         jalan otomatis 24/7"
+    ;;
+  new)      "$PY" "$HERE/wallets.py" new "${1:-100}" "${2:-default}" ;;
+  check)    "$PY" "$HERE/auto_entry.py" --dry-run "$@" ;;
+  once)     "$PY" "$HERE/auto_entry.py" --once "$@" ;;
+  start)    "$PY" "$HERE/auto_entry.py" "$@" ;;
+  list)     "$PY" "$HERE/wallets.py" list ;;
+  stats)    "$PY" "$HERE/wallets.py" stats ;;
+  groups)   "$PY" "$HERE/wallets.py" groups ;;
+  funder|saldo|balance)
+            "$PY" "$HERE/wallets.py" funder ;;
+  rpc)      "$PY" "$HERE/auto_entry.py" --rpc ;;
+  verify)   "$PY" "$HERE/wallets.py" verify ;;
+  backup)   "$PY" "$HERE/wallets.py" backup ;;
+  export)   "$PY" "$HERE/wallets.py" export "${1:-$HERE/wallets-export.csv}" ;;
+  set-funder)
+            "$PY" "$HERE/wallets.py" import-funder "$1" ;;
+  import)   "$PY" "$HERE/wallets.py" import "$@" ;;
+  disable)  "$PY" "$HERE/wallets.py" disable "$1" ;;
+  enable)   "$PY" "$HERE/wallets.py" enable "$1" ;;
+  remove)   "$PY" "$HERE/wallets.py" remove "$1" ;;
+
+  bg)
+    if ! command -v systemctl >/dev/null 2>&1; then
+      echo "systemd tidak ada. Pakai: nohup ./rh start > rh.log 2>&1 &"
+      exit 1
+    fi
+    # teruskan batasan seperti --limit 50 / --group batch2 ke service
+    BG_ARGS="$*"
+    [[ -n "$BG_ARGS" ]] && echo "Service dijalankan dengan opsi: $BG_ARGS"
+    cat > /etc/systemd/system/rh-entry.service <<UNIT
+[Unit]
+Description=Robinhood Chain auto-entry
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$HERE
+Environment=RH_WALLETS=$RH_WALLETS
+Environment=RH_STATE=$RH_STATE
+Environment=RH_BACKUP_DIR=$RH_BACKUP_DIR
+ExecStart=$PY $HERE/auto_entry.py $BG_ARGS
+Restart=always
+RestartSec=60
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl daemon-reload
+    systemctl enable rh-entry >/dev/null 2>&1
+    # WAJIB restart, bukan 'enable --now'. Kalau service sudah jalan,
+    # 'enable --now' tidak melakukan apa-apa sehingga bot tetap memakai
+    # daftar wallet lama di memori (wallet baru tidak ikut terbaca).
+    systemctl restart rh-entry
+    sleep 4
+    systemctl status rh-entry --no-pager | head -4
+    echo
+    echo "--- log awal (pastikan jumlah wallet sudah benar) ---"
+    journalctl -u rh-entry --no-pager -n 6 -o cat 2>/dev/null | head -6
+    echo
+    echo "Lihat log terus: ./rh log"
+    ;;
+  stop)
+    systemctl disable --now rh-entry 2>/dev/null || true
+    echo "Bot dihentikan."
+    ;;
+  log)
+    journalctl -u rh-entry -f -n 40
+    ;;
+  status)
+    systemctl status rh-entry --no-pager | head -10
+    ;;
+
+  help|*)
+    sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    ;;
+esac

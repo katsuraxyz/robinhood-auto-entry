@@ -1,0 +1,12 @@
+# Daftar RPC pribadi, satu URL per baris.
+# Copy file ini jadi rpcs.txt lalu isi dengan RPC punyamu.
+# Baris kosong dan yang mulai '#' diabaikan.
+#
+# Bot memakai semua RPC di sini secara bergiliran (round-robin).
+# Kalau satu RPC error, dia di-skip sementara dan bot pindah ke yang lain.
+# Kalau SEMUA RPC di sini mati, bot otomatis jatuh ke RPC publik:
+#   https://rpc.mainnet.chain.robinhood.com
+#
+# Contoh (ganti dengan kunci punyamu):
+# https://robinhood-mainnet.g.alchemy.com/v2/KUNCI_KAMU_1
+# https://robinhood-mainnet.g.alchemy.com/v2/KUNCI_KAMU_2

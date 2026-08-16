@@ -1,0 +1,40 @@
+# ============================================================
+# JANGAN PERNAH di-commit: berisi private key / API key.
+# Catatan: git tidak mendukung komentar di akhir baris pola,
+# jadi semua keterangan ditulis di baris sendiri.
+# ============================================================
+
+# private key semua wallet
+wallets.json
+wallets.tmp
+
+# catatan flag harian
+state.json
+state.tmp
+state.corrupt
+
+# salinan wallets.json, berisi private key juga
+backups/
+
+# API key RPC pribadi (Alchemy dll)
+rpcs.txt
+
+# hasil ./rh export, isinya private key
+*.csv
+keys*.txt
+.env
+
+# file kerja
+*.tmp
+__pycache__/
+.venv/
+venv/
+*.pyc
+
+# skrip diagnosa sementara
+diag*.py
+cek*.py
+hitung*.py
+t_*.py
+verif*.py
+audit*.py
